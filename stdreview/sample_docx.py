@@ -94,9 +94,10 @@ DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </Relationships>"""
 
 
-def build_docx(path, title, blocks):
-    """blocks: ("h1", 글) ("h2", 글) ("p", 글) ("cap", 글) ("tbl", [[..]]) ("fig",) ("math", 글)."""
-    body = [_p(title, "Title")]
+def build_docx(path, title, blocks, header=None):
+    """blocks: ("h1", 글) ("h2", 글) ("p", 글) ("cap", 글) ("tbl", [[..]]) ("fig",) ("math", 글).
+    header: 머리글 줄 목록(있으면 word/header1.xml 로 넣습니다)."""
+    body = [_p(title, "Title")] if title else []
     fig_n = 0
     for b in blocks:
         k = b[0]
@@ -115,16 +116,22 @@ def build_docx(path, title, blocks):
             body.append(_fig(fig_n))
         elif k == "math":
             body.append(_math(b[1]))
+    href = '<w:headerReference w:type="default" r:id="rIdHdr"/>' if header else ""
     doc = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document %s><w:body>%s'
-           '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+           '<w:sectPr>' + href + '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
            '</w:body></w:document>') % (NS_DECL, "".join(body))
     core = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties '
             'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>%s</dc:title></cp:coreProperties>') % escape(title)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", CT)
+        ct = CT if not header else CT.replace("</Types>", '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>')
+        z.writestr("[Content_Types].xml", ct)
         z.writestr("_rels/.rels", RELS)
-        z.writestr("word/_rels/document.xml.rels", DOC_RELS)
+        rels = DOC_RELS
+        if header:
+            rels = rels.replace("</Relationships>", '<Relationship Id="rIdHdr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>')
+            z.writestr("word/header1.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr %s>%s</w:hdr>' % (NS_DECL, "".join(_p(t) for t in header)))
+        z.writestr("word/_rels/document.xml.rels", rels)
         z.writestr("word/document.xml", doc)
         z.writestr("word/styles.xml", STYLES)
         z.writestr("word/media/figure.png", _png())

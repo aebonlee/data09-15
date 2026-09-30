@@ -96,6 +96,16 @@ def read_docx(path, number_titles=True):
     except zipfile.BadZipFile as e:
         raise DocxError("docx 파일을 열 수 없습니다: %s (%s). 구형 .doc 이면 Word 에서 .docx 로 저장해 주세요." % (path, e))
     with z:
+        header_lines = []
+        for name in sorted(n for n in z.namelist() if re.match(r"word/(header|footer)\d*\.xml$", n)):
+            try:
+                hroot = ET.fromstring(z.read(name))
+            except ET.ParseError:
+                continue
+            for p in hroot.iter(_q("w:p")):
+                t = _para_text(p)
+                if t and t not in header_lines:
+                    header_lines.append(t)
         if "word/document.xml" not in z.namelist():
             raise DocxError("word/document.xml 이 없습니다. Word(.docx) 파일이 맞는지 확인해 주세요: %s" % path)
         styles = _read_styles(z)
@@ -148,28 +158,61 @@ def read_docx(path, number_titles=True):
                 "omath": sum(1 for _ in el.iter(_q("m:oMath"))),
                 "figure": False,
             })
-    return build(blocks, core_title=core_title, number_titles=number_titles)
+    if not core_title and header_lines:
+        from .pdf_reader import header_title
+        core_title = header_title(header_lines)
+    return build(blocks, core_title=core_title, number_titles=number_titles, source="docx", header=header_lines)
 
 
-def _looks_like_title(text):
+# 개정 이력 머리말 — 이 문단 뒤는 본문 절이 아니라 개정 이력으로 봅니다.
+REV_RE = re.compile(r"(제\s*[/·]?\s*개정\s*(이력|기록)|개정\s*(이력|기록)|Revision\s*(History|Log|Record)|Change\s*Log)", re.I)
+REV_ROW_RE = re.compile(r"^\s*(?:Rev\.?\s*)?(\d{1,2}|[0-9xX]{2})\s+(\d{4}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2})\s*(.*)$")
+DATE_RE = re.compile(r"(\d{4})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})")
+
+
+def _rev_rows(blocks):
+    rows = []
+    for b in blocks:
+        if b["kind"] == "tbl":
+            for r in b["rows"]:
+                m = REV_ROW_RE.match(" ".join(c for c in r if c))
+                if m:
+                    rows.append({"rev": m.group(1), "date": re.sub(r"\s", "", m.group(2)), "rest": m.group(3).strip()})
+        elif b.get("text"):
+            m = REV_ROW_RE.match(b["text"])
+            if m:
+                rows.append({"rev": m.group(1), "date": re.sub(r"\s", "", m.group(2)), "rest": m.group(3).strip()})
+    return rows
+
+
+def _looks_like_title(text, limit=40):
     t = text.strip()
-    if len(t) > 40:
+    if len(t) > limit:
         return False
     if t.endswith((".", "다", "다.", "함", "음", ":", "：")):
         return False
     return True
 
 
-def build(blocks, core_title="", number_titles=True):
+def build(blocks, core_title="", number_titles=True, source="docx", header=None, title_max=40):
     """블록에 절 번호를 매기고 제목 목록을 만듭니다. (docx 없이도 시험할 수 있게 분리)"""
     headings = []
     counters = []
     current = ""
     top_last = 0
     title = core_title
+    in_rev = False
+    rev_blocks = []
     for i, b in enumerate(blocks):
         b["idx"] = i
         b["heading"] = None
+        if not in_rev and b["kind"] == "p" and b.get("text") and len(b["text"]) <= 40 and REV_RE.search(b["text"]):
+            in_rev = True
+        if in_rev:
+            b["rev"] = True
+            b["sec"] = ""
+            rev_blocks.append(b)
+            continue
         if b["kind"] == "p" and b["text"]:
             style_name = (b.get("style") or "").lower()
             if not title and (style_name in ("title", "제목") or (not headings and i == 0 and not NUM_TITLE_RE.match(b["text"]))):
@@ -188,12 +231,12 @@ def build(blocks, core_title="", number_titles=True):
                     counters = (counters + [0] * lvl)[:lvl]
                     counters[lvl - 1] += 1
                     num = ".".join(str(c) for c in counters)
-            elif number_titles and m and _looks_like_title(b["text"]):
+            elif number_titles and m and b.get("title_ok", True) and _looks_like_title(b["text"], title_max):
                 cand = m.group(1)
                 parts = cand.split(".")
                 top = int(parts[0])
                 if len(parts) == 1:
-                    if top > top_last:
+                    if top_last < top <= top_last + 3:
                         num, name = cand, m.group(2).strip()
                 else:
                     if current and current.split(".")[0] == parts[0]:
@@ -208,11 +251,24 @@ def build(blocks, core_title="", number_titles=True):
                 headings.append(h)
                 b["heading"] = h
         b["sec"] = current
-    return _finish(blocks, headings, title)
+    doc = _finish(blocks, headings, title)
+    doc["source"] = source
+    doc["header"] = list(header or [])
+    doc["revision"] = {"found": bool(rev_blocks), "rows": _rev_rows(rev_blocks)}
+    return doc
 
 
 def _finish(blocks, headings, title):
     return {"blocks": blocks, "headings": headings, "title": title}
+
+
+def read_document(path, number_titles=True):
+    """확장자를 보고 .docx 또는 .pdf 를 읽습니다."""
+    suffix = str(path).lower().rsplit(".", 1)[-1]
+    if suffix == "pdf":
+        from .pdf_reader import read_pdf
+        return read_pdf(path, number_titles=number_titles)
+    return read_docx(path, number_titles=number_titles)
 
 
 # ---------- 절 도우미 ----------
