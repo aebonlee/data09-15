@@ -8,3 +8,8 @@ __pycache__/
 data/
 결과/
 결과_예시/
+
+# 학습 프로필 — 사내 Template·표준·회의록에서 뽑은 규칙(용어·지적 문구가 담김). 내 PC 에만 둡니다.
+profile*.json
+*학습프로필*.json
+*.profile.json

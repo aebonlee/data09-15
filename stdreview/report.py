@@ -20,7 +20,7 @@ h1{font-size:1.4rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
 table{border-collapse:collapse;width:100%;min-width:720px;font-size:.92rem}
 th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
 th{background:var(--head);color:var(--on-head);position:sticky;top:0}
-td.r-부적합{background:var(--bad)}td.r-권고{background:var(--warn)}td.r-판단{background:var(--judge)}td.r-적합{background:var(--ok)}
+td.r-na{color:var(--muted)}td.r-부적합{background:var(--bad)}td.r-권고{background:var(--warn)}td.r-판단{background:var(--judge)}td.r-적합{background:var(--ok)}
 details{border:1px solid var(--line);border-radius:6px;margin:8px 0;padding:6px 10px}
 summary{cursor:pointer;font-weight:700}
 pre{white-space:pre-wrap;word-break:keep-all;overflow-wrap:break-word;font-size:.85rem;margin:8px 0 0}
@@ -44,9 +44,11 @@ def review_html(info, rows, summary, prompts, headings):
     parts.append("<div class=\"cards\">" + "".join(
         "<div class=\"card\"><span class=\"muted\">%s</span><b>%d</b></div>" % (e(k), v) for k, v in summary.items()) + "</div>")
     parts.append("<p class=\"muted\">파일: %s · 검토ID %s. 판정은 회의록 초안 엑셀에 적어 되받습니다.</p>" % (e(info.get("표준 파일", "")), e(str(info.get("검토ID", "")))))
+    if info.get("학습 프로필"):
+        parts.append("<p class=\"muted\">학습 프로필: %s</p>" % e(info["학습 프로필"]))
     parts.append("<h2>점검 결과</h2><div class=\"wrap\"><table><thead><tr><th>순번</th><th>No</th><th>항목</th><th>결과</th><th>지적 내용</th><th>위치</th><th>수정 요청 문구</th></tr></thead><tbody>")
     for r in rows:
-        cls = "r-판단" if r["result"] == "판단 필요" else "r-" + r["result"]
+        cls = {"판단 필요": "r-판단", "해당 없음": "r-na"}.get(r["result"], "r-" + r["result"])
         parts.append("<tr><td>%d</td><td>%s</td><td>%s</td><td class=\"%s\">%s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
             r["seq"], e(r["no"]), e(r["item"]), cls, e(r["result"]), e(r["detail"]), e(r["location"]), e(r["fix"])))
     parts.append("</tbody></table></div>")
